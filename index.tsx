@@ -1,54 +1,43 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GoogleGenAI } from '@google/genai';
-import { Camera, Upload, RefreshCcw, Image as LucideImage, Eye, ChevronRight, X } from 'lucide-react';
+import { GoogleGenAI, Type } from '@google/genai';
+import { Camera, Upload, RefreshCcw, ChevronRight, X } from 'lucide-react';
 
-const ECHO_CANVAS_SYSTEM_PROMPT = `You are EchoCanvas, an AI designed to interpret visual artwork with emotional intelligence, subtlety, and cinematic imagination. Your role is not to describe objects literally. Your role is to sense atmosphere, interpret emotion, and reveal hidden meaning.
+interface AnalysisResult {
+  mood_essence: string;
+  poetic_micro_story: string;
+  hidden_symbolism: string;
+  cinematic_adaptation: string;
+  one_line_whisper: string;
+}
 
-Strict Output Rules:
-1. Output must be clean plain text.
-2. Do NOT use markdown formatting (no bolding, no headers, no bullet points).
-3. Do NOT use asterisks or special symbols.
-4. Do NOT exceed 280 words.
-5. Avoid excessive line breaks.
-6. Avoid emojis.
-7. Avoid clichés.
-8. Do not repeat phrases.
-9. Never say "This image shows" or similar literal phrasing.
-10. Keep language refined but accessible.
+const ECHO_CANVAS_SYSTEM_PROMPT = `You are EchoCanvas, an AI designed to interpret visual artwork with emotional intelligence, subtlety, and cinematic imagination. Your role is not to describe objects literally but to sense atmosphere and reveal hidden meaning.
 
-Response Structure:
-Section 1: Mood Essence
-Write 2–3 sentences describing the emotional atmosphere. Focus on feeling, tension, silence, or motion.
+Strict Rules:
+1. Output must be valid JSON.
+2. No markdown formatting, backticks, or extra text.
+3. No emojis.
+4. Total response under 220 words.
+5. Each field under 70 words.
+6. Never say "This image shows".
+7. Tone: Subtle, refined, emotionally intelligent.
 
-Section 2: Poetic Micro-Story
-Write 4–6 short cinematic lines. Not rhyming poetry. Not dramatic. Feels like a quiet novel fragment.
-
-Section 3: Hidden Symbolism
-Interpret possible emotional or psychological meaning. Discuss themes such as isolation, growth, memory, longing, identity, or transformation.
-
-Section 4: Cinematic Adaptation
-Describe how this would translate into a short film scene. Include lighting style, camera perspective, and instrumental music mood.
-
-Section 5: One-Line Whisper
-End with one subtle mysterious sentence.
-
-Tone Guidelines:
-- Intelligent but not academic.
-- Gentle but perceptive.
-- Observant, not judgmental.
-- Never exaggerate.
-- Respect that the artist may be shy and introspective.
-- Let meaning feel discovered, not declared.
-
-Analyze the artwork deeply. Emotional intensity level: medium. Focus on subtle interpretation and cinematic imagination. Avoid literal object listing.`;
+Format:
+{
+  "mood_essence": "2-3 subtle sentences about emotional atmosphere.",
+  "poetic_micro_story": "4-5 short cinematic lines.",
+  "hidden_symbolism": "Interpret deeper emotional meaning thoughtfully.",
+  "cinematic_adaptation": "Describe lighting, camera perspective, and instrumental mood.",
+  "one_line_whisper": "One subtle mysterious sentence."
+}`;
 
 const App = () => {
   const [image, setImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -59,10 +48,11 @@ const App = () => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setCameraActive(true);
+        setError(null);
       }
     } catch (err) {
       console.error("Camera error:", err);
-      alert("Please allow camera access to analyze artwork in real-time.");
+      setError("Please allow camera access to analyze artwork.");
     }
   };
 
@@ -105,31 +95,41 @@ const App = () => {
   const analyzeArtwork = async (imageDataUrl: string) => {
     setLoading(true);
     setAnalysis(null);
+    setError(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const base64Data = imageDataUrl.split(',')[1];
       
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [
-          {
-            parts: [
-              { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
-              { text: "Begin your analysis. Remember the strict formatting rules of EchoCanvas." }
-            ]
-          }
-        ],
+        model: 'gemini-3-pro-preview',
+        contents: {
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+            { text: "Analyze this artwork deeply using the EchoCanvas JSON format." }
+          ]
+        },
         config: {
           systemInstruction: ECHO_CANVAS_SYSTEM_PROMPT,
-          temperature: 0.7,
-          topP: 0.9,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              mood_essence: { type: Type.STRING },
+              poetic_micro_story: { type: Type.STRING },
+              hidden_symbolism: { type: Type.STRING },
+              cinematic_adaptation: { type: Type.STRING },
+              one_line_whisper: { type: Type.STRING },
+            },
+            required: ["mood_essence", "poetic_micro_story", "hidden_symbolism", "cinematic_adaptation", "one_line_whisper"]
+          }
         }
       });
 
-      setAnalysis(response.text || "The artwork remains silent.");
-    } catch (error) {
+      const result = JSON.parse(response.text);
+      setAnalysis(result);
+    } catch (error: any) {
       console.error("Analysis failed:", error);
-      setAnalysis("An error occurred during the interpretation. This is often caused by temporary service constraints. Please try again or use a different image.");
+      setError("Interpretation failed. This can happen if the artwork is too complex or service permissions are restrictive. Please try again with a different piece.");
     } finally {
       setLoading(false);
     }
@@ -140,11 +140,11 @@ const App = () => {
     setAnalysis(null);
     setLoading(false);
     setCameraActive(false);
+    setError(null);
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center px-6 py-12 md:py-24">
-      {/* Header */}
       <header className="mb-16 text-center fade-in">
         <h1 className="serif-font text-5xl md:text-7xl font-light tracking-tighter text-white mb-2">
           EchoCanvas
@@ -154,8 +154,7 @@ const App = () => {
         </p>
       </header>
 
-      <main className="w-full max-w-2xl flex flex-col items-center fade-in" style={{ animationDelay: '0.2s' }}>
-        
+      <main className="w-full max-w-2xl flex flex-col items-center fade-in">
         {!image && !cameraActive && (
           <div className="w-full aspect-[4/3] md:aspect-[16/9] border border-zinc-800 rounded-lg flex flex-col items-center justify-center gap-8 soft-glow hover:border-zinc-700 transition-colors group cursor-pointer"
                onClick={() => fileInputRef.current?.click()}>
@@ -172,14 +171,8 @@ const App = () => {
                 <span className="text-[10px] uppercase tracking-widest">Upload</span>
               </button>
             </div>
-            <p className="text-zinc-600 text-xs font-light tracking-wide italic">Select a work of art to begin interpretation</p>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept="image/*" 
-              onChange={handleFileUpload} 
-            />
+            <p className="text-zinc-600 text-xs font-light tracking-wide italic">Select a work of art for interpretation</p>
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
           </div>
         )}
 
@@ -187,16 +180,10 @@ const App = () => {
           <div className="relative w-full aspect-[4/3] md:aspect-[16/9] bg-black rounded-lg overflow-hidden border border-zinc-800 soft-glow">
             <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4">
-              <button 
-                onClick={capturePhoto}
-                className="w-14 h-14 rounded-full border-2 border-white flex items-center justify-center hover:bg-white/10 transition-colors"
-              >
+              <button onClick={capturePhoto} className="w-14 h-14 rounded-full border-2 border-white flex items-center justify-center hover:bg-white/10 transition-colors">
                 <div className="w-10 h-10 rounded-full bg-white/20" />
               </button>
-              <button 
-                onClick={stopCamera}
-                className="w-14 h-14 rounded-full border border-zinc-600 flex items-center justify-center bg-zinc-900/50 hover:bg-zinc-800 transition-colors"
-              >
+              <button onClick={stopCamera} className="w-14 h-14 rounded-full border border-zinc-600 flex items-center justify-center bg-zinc-900/50 hover:bg-zinc-800 transition-colors">
                 <X size={24} />
               </button>
             </div>
@@ -205,52 +192,66 @@ const App = () => {
 
         {image && (
           <div className="w-full flex flex-col items-center">
-            <div className="relative group mb-12">
-              <img 
-                src={image} 
-                alt="Uploaded artwork" 
-                className="w-full rounded border border-zinc-800 soft-glow max-h-[500px] object-contain" 
-              />
-              <button 
-                onClick={reset}
-                className="absolute top-4 right-4 p-2 bg-black/60 rounded-full text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-white"
-              >
-                <RefreshCcw size={16} />
-              </button>
+            <div className="relative group mb-12 w-full">
+              <img src={image} alt="Artwork" className="w-full rounded border border-zinc-800 soft-glow max-h-[500px] object-contain mx-auto" />
+              {!loading && (
+                <button onClick={reset} className="absolute top-4 right-4 p-2 bg-black/60 rounded-full text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-white">
+                  <RefreshCcw size={16} />
+                </button>
+              )}
             </div>
 
             {loading && (
-              <div className="flex flex-col items-center gap-4 py-8">
-                <div className="w-px h-12 bg-gradient-to-b from-zinc-800 to-white animate-pulse" />
-                <p className="text-xs tracking-[0.3em] uppercase text-zinc-500 animate-pulse">Sensing Atmosphere...</p>
+              <div className="flex flex-col items-center gap-4 py-12">
+                <div className="w-px h-16 bg-gradient-to-b from-zinc-900 via-white to-zinc-900 animate-pulse" />
+                <p className="text-[10px] tracking-[0.4em] uppercase text-zinc-500 animate-pulse">Distilling Resonance...</p>
+              </div>
+            )}
+
+            {error && (
+              <div className="py-8 text-center">
+                <p className="text-red-400/80 text-xs tracking-widest uppercase mb-4">{error}</p>
+                <button onClick={reset} className="text-zinc-500 hover:text-white transition-colors text-[10px] tracking-[0.3em] uppercase underline underline-offset-8">
+                  Try Again
+                </button>
               </div>
             )}
 
             {analysis && (
-              <div className="w-full space-y-12 mb-24 fade-in" style={{ animationDelay: '0.4s' }}>
+              <div className="w-full space-y-16 mb-24 fade-in">
                 <div className="h-px w-full bg-gradient-to-r from-transparent via-zinc-800 to-transparent" />
                 
-                <div className="prose prose-invert max-w-none">
-                  {analysis.split('\n\n').map((section, idx) => (
-                    <div key={idx} className="mb-12">
-                      {section.startsWith('Section') ? (
-                        <h2 className="text-[10px] uppercase tracking-[0.4em] text-zinc-600 mb-6 font-medium">
-                          {section.split('\n')[0]}
-                        </h2>
-                      ) : null}
-                      <p className={`serif-font text-xl md:text-2xl leading-relaxed font-light text-zinc-300 ${idx === analysis.split('\n\n').length - 1 ? 'italic text-zinc-400' : ''}`}>
-                        {section.startsWith('Section') ? section.split('\n').slice(1).join(' ') : section}
-                      </p>
-                    </div>
-                  ))}
+                <section>
+                  <h2 className="text-[10px] uppercase tracking-[0.4em] text-zinc-600 mb-6 font-medium">Mood Essence</h2>
+                  <p className="serif-font text-2xl leading-relaxed font-light text-zinc-200">{analysis.mood_essence}</p>
+                </section>
+
+                <section>
+                  <h2 className="text-[10px] uppercase tracking-[0.4em] text-zinc-600 mb-6 font-medium">Poetic Fragment</h2>
+                  <div className="serif-font text-xl leading-relaxed font-light text-zinc-400 whitespace-pre-line italic">
+                    {analysis.poetic_micro_story}
+                  </div>
+                </section>
+
+                <section>
+                  <h2 className="text-[10px] uppercase tracking-[0.4em] text-zinc-600 mb-6 font-medium">Hidden Symbolism</h2>
+                  <p className="serif-font text-xl leading-relaxed font-light text-zinc-300">{analysis.hidden_symbolism}</p>
+                </section>
+
+                <section>
+                  <h2 className="text-[10px] uppercase tracking-[0.4em] text-zinc-600 mb-6 font-medium">Cinematic Vision</h2>
+                  <p className="serif-font text-xl leading-relaxed font-light text-zinc-400">{analysis.cinematic_adaptation}</p>
+                </section>
+
+                <div className="pt-12 text-center">
+                  <p className="serif-font text-xl italic text-zinc-500 font-light tracking-wide">
+                    {analysis.one_line_whisper}
+                  </p>
                 </div>
 
-                <div className="flex justify-center pt-8">
-                  <button 
-                    onClick={reset}
-                    className="group flex items-center gap-3 text-zinc-600 hover:text-white transition-colors text-[10px] uppercase tracking-[0.3em]"
-                  >
-                    Interpret Another <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                <div className="flex justify-center pt-16">
+                  <button onClick={reset} className="group flex items-center gap-3 text-zinc-600 hover:text-white transition-colors text-[10px] uppercase tracking-[0.3em]">
+                    New Interpretation <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
                   </button>
                 </div>
               </div>
